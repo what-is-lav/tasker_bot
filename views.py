@@ -9,36 +9,29 @@ import database as db
 
 import keyboards as kb
 
-# Роутер заменяет диспетчер (dp) внутри отдельных файлов
 router = Router()
 
-# Описываем шаги машины состояний
 class TaskFSM(StatesGroup):
     waiting_for_title = State()
     waiting_for_type = State()
-    waiting_for_days = State()  # Понадобится только для еженедельных задач
+    waiting_for_days = State()
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
-    # Сбрасываем состояние на случай, если юзер нажал /start посреди создания задачи
     await state.clear() 
     await message.answer(
         "Главное меню. Что будем планировать?",
         reply_markup=kb.main_menu
     )
 
-# Обработка нажатия на текстовую кнопку из Reply-клавиатуры
 @router.message(F.text == "➕ Новая задача")
 async def start_adding_task(message: Message, state: FSMContext):
     await message.answer("Напиши текст задачи:")
     await state.set_state(TaskFSM.waiting_for_title)
 
-# Перехватываем любой текст, если бот находится в состоянии waiting_for_title
 @router.message(TaskFSM.waiting_for_title)
 async def process_task_title(message: Message, state: FSMContext):
-    # Сохраняем введенный текст в хранилище FSM
     await state.update_data(title=message.text)
-    
     await message.answer(
         f"Текст сохранен: <b>{message.text}</b>\n\nТеперь выбери тип задачи:",
         reply_markup=kb.task_type_menu,
@@ -46,38 +39,26 @@ async def process_task_title(message: Message, state: FSMContext):
     )
     await state.set_state(TaskFSM.waiting_for_type)
 
-# Обработка выбора: Разовая или Ежедневная задача
 @router.callback_query(F.data.in_(["type_one_time", "type_daily"]), TaskFSM.waiting_for_type)
 async def save_simple_task(callback: CallbackQuery, state: FSMContext):
-    # Достаем текст задачи из памяти FSM
     user_data = await state.get_data()
     title = user_data.get("title")
     
-    # Определяем тип для базы и для красивого вывода
     task_type = "one_time" if callback.data == "type_one_time" else "daily"
     type_name = "Разовая" if task_type == "one_time" else "Ежедневная"
     
-    # Сохраняем в базу данных
     await db.add_task(telegram_id=callback.from_user.id, title=title, task_type=task_type)
     
-    # edit_text меняет текущее сообщение (убирает кнопки и выводит текст успеха)
     await callback.message.edit_text(
         f"✅ Задача <b>«{title}»</b> добавлена!\nТип: {type_name}",
         parse_mode="HTML"
     )
-    
-    # Очищаем машину состояний
     await state.clear()
-    
-    # Обязательно отвечаем на callback, чтобы "часики" на кнопке перестали крутиться
     await callback.answer()
 
-
-# Обработка выбора: Еженедельная задача
 @router.callback_query(F.data == "type_weekly", TaskFSM.waiting_for_type)
 async def ask_for_days(callback: CallbackQuery, state: FSMContext):
     await state.set_state(TaskFSM.waiting_for_days)
-    
     await callback.message.edit_text(
         "Напиши дни недели цифрами через пробел (1 - Пн, 2 - Вт... 7 - Вс).\n"
         "Например, для понедельника, среды и пятницы напиши: <b>1 3 5</b>",
@@ -85,13 +66,11 @@ async def ask_for_days(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
-
-# Перехватываем текст с днями недели
 @router.message(TaskFSM.waiting_for_days)
 async def save_weekly_task(message: Message, state: FSMContext):
     user_data = await state.get_data()
     title = user_data.get("title")
-    week_days = message.text  # Забираем дни (например, "1 3 5")
+    week_days = message.text
     
     await db.add_task(
         telegram_id=message.from_user.id, 
@@ -105,69 +84,70 @@ async def save_weekly_task(message: Message, state: FSMContext):
         parse_mode="HTML"
     )
     await state.clear()
+
+# Вспомогательная функция для генерации текста и клавиатуры списка задач
+async def get_tasks_presentation(telegram_id: int):
+    tasks = await db.get_all_user_tasks(telegram_id)
+    
+    if not tasks:
+        return "Твой список дел пуст! Можно отдыхать 🎉", None
+        
+    text = "<b>📅 Твой список задач:</b>\n"
+    builder = InlineKeyboardBuilder()
+    
+    simple_tasks = [t for t in tasks if t.task_type in ("one_time", "daily")]
+    weekly_tasks = [t for t in tasks if t.task_type == "weekly"]
+    
+    counter = 1
+    
+    if simple_tasks:
+        text += "\n📌 <b>Основные (разовые и ежедневные):</b>\n"
+        for task in simple_tasks:
+            status = "✅" if task.is_done else "⬜️"
+            icon = "🎯" if task.task_type == "one_time" else "🔄"
+            text += f"{counter}. {status} {icon} {task.title}\n"
+            
+            if not task.is_done:
+                builder.button(text=f"✓ {counter}", callback_data=f"done_{task.id}")
+            counter += 1
+
+    if weekly_tasks:
+        text += "\n🗓 <b>Еженедельные задачи:</b>\n"
+        for task in weekly_tasks:
+            status = "✅" if task.is_done else "⬜️"
+            text += f"{counter}. {status} 🔄 {task.title} <i>(дни: {task.week_days})</i>\n"
+            
+            if not task.is_done:
+                builder.button(text=f"✓ {counter}", callback_data=f"done_{task.id}")
+            counter += 1
+            
+    builder.adjust(4)
+    return text, builder.as_markup()
+
 # Обработчик кнопки "Список дел"
 @router.message(F.text == "📅 Список дел")
 async def show_tasks(message: Message):
-    # Достаем все невыполненные задачи пользователя
-    tasks = await db.get_active_tasks(message.from_user.id)
-    
-    if not tasks:
-        await message.answer("Твой список дел пуст! Можно отдыхать 🎉")
-        return
-        
-    text = "<b>📅 Твои активные задачи:</b>\n\n"
-    builder = InlineKeyboardBuilder()
-    
-    for i, task in enumerate(tasks, start=1):
-        # Добавляем эмодзи в зависимости от типа задачи
-        icon = "🎯" if task.task_type == "one_time" else "🔄"
-        
-        # Формируем текст сообщения
-        text += f"{i}. {icon} {task.title}\n"
-        
-        # Создаем кнопку для каждой задачи.
-        # В callback_data зашиваем ID задачи, например: "done_15"
-        builder.button(text=f"⬜️ {i}", callback_data=f"done_{task.id}")
-        
-    # Группируем кнопки по 4 в ряд, чтобы они не выстраивались в огромную вертикальную колонну
-    builder.adjust(4) 
-    
-    await message.answer(text, reply_markup=builder.as_markup(), parse_mode="HTML")
-
+    text, markup = await get_tasks_presentation(message.from_user.id)
+    if markup:
+        await message.answer(text, reply_markup=markup, parse_mode="HTML")
+    else:
+        await message.answer(text)
 
 # Обработка нажатия на кнопку выполнения задачи
 @router.callback_query(F.data.startswith("done_"))
 async def process_task_done(callback: CallbackQuery):
-    # Разделяем строку "done_15" и забираем ID (15)
     task_id = int(callback.data.split("_")[1])
-    
-    # Отмечаем задачу в базе как выполненную
     completed_task = await db.complete_task(task_id)
     
     if not completed_task:
-        await callback.answer("Эта задача уже выполнена или удалена!", show_alert=True)
+        await callback.answer("Эта задача уже выполнена!", show_alert=True)
         return
 
-    # Показываем красивое всплывающее уведомление поверх экрана
-    await callback.answer(f"✅ Выполнено: {completed_task.title}", show_alert=False)
+    await callback.answer(f"✅ Готово: {completed_task.title}", show_alert=False)
     
-    # Обновляем список задач
-    # Заново запрашиваем актуальные задачи и перерисовываем сообщение
-    remaining_tasks = await db.get_active_tasks(callback.from_user.id)
+    text, markup = await get_tasks_presentation(callback.from_user.id)
     
-    if not remaining_tasks:
-        await callback.message.edit_text("Все задачи выполнены! Отличная работа 🎉")
-        return
-
-    new_text = "<b>📅 Твои активные задачи:</b>\n\n"
-    builder = InlineKeyboardBuilder()
-    
-    for i, task in enumerate(remaining_tasks, start=1):
-        icon = "🎯" if task.task_type == "one_time" else "🔄"
-        new_text += f"{i}. {icon} {task.title}\n"
-        builder.button(text=f"⬜️ {i}", callback_data=f"done_{task.id}")
-        
-    builder.adjust(4)
-    
-    # Редактируем сообщение (выполненная задача просто исчезнет из списка)
-    await callback.message.edit_text(new_text, reply_markup=builder.as_markup(), parse_mode="HTML")
+    if markup:
+        await callback.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+    else:
+        await callback.message.edit_text(text)
