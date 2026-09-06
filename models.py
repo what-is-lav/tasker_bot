@@ -3,7 +3,6 @@ from sqlalchemy import BigInteger, String, Boolean, DateTime, ForeignKey
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 
-# Используем SQLite для быстрого старта, но благодаря SQLAlchemy легко переехать на PostgreSQL
 engine = create_async_engine(url='sqlite+aiosqlite:///db.sqlite3', echo=False)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -29,10 +28,13 @@ class Task(Base):
     # one_time (разовая), daily (ежедневная), weekly (еженедельная)
     task_type: Mapped[str] = mapped_column(String(50), default="one_time")
     
-    # Для еженедельных задач храним дни, например "0,2,4" (Пн, Ср, Пт)
+    # Для еженедельных задач храним дни, например "1 3 5" (Пн, Ср, Пт)
     week_days: Mapped[str] = mapped_column(String(50), nullable=True) 
     
     deadline: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=True)
+    
+    # НОВОЕ ПОЛЕ: Время напоминания в формате "HH:MM"
+    reminder_time: Mapped[str] = mapped_column(String(5), nullable=True)
 
 async def init_db():
     async with engine.begin() as conn:

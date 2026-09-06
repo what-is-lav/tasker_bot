@@ -1,16 +1,16 @@
-# database.py
 import datetime
 from sqlalchemy import select, update
 from models import async_session, Task, User
 
-async def add_task(telegram_id: int, title: str, task_type: str, week_days: str = None):
+async def add_task(telegram_id: int, title: str, task_type: str, week_days: str = None, reminder_time: str = None):
     """Добавляет новую задачу в базу данных."""
     async with async_session() as session:
         new_task = Task(
             user_id=telegram_id,
             title=title,
             task_type=task_type,
-            week_days=week_days
+            week_days=week_days,
+            reminder_time=reminder_time # Сохраняем время
         )
         session.add(new_task)
         await session.commit()
@@ -69,3 +69,13 @@ async def reset_weekly_tasks():
                 task.is_done = False
                 
         await session.commit()
+
+async def get_tasks_by_reminder(time_str: str):
+    """Ищет невыполненные задачи на конкретное время (формат HH:MM)."""
+    async with async_session() as session:
+        stmt = select(Task).where(
+            Task.reminder_time == time_str, 
+            Task.is_done == False
+        )
+        result = await session.execute(stmt)
+        return result.scalars().all()

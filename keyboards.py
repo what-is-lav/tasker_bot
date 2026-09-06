@@ -13,8 +13,8 @@ main_menu = ReplyKeyboardMarkup(
 # Inline-клавиатура для выбора типа задачи
 task_type_menu = InlineKeyboardMarkup(
     inline_keyboard=[
-        [InlineKeyboardButton(text="Разовая 🎯", callback_data="type_one_time")],
-        [InlineKeyboardButton(text="Ежедневная 🔄", callback_data="type_daily")],
-        [InlineKeyboardButton(text="Еженедельная 📅", callback_data="type_weekly")]
+        [InlineKeyboardButton(text="Разовая ", callback_data="type_one_time")],
+        [InlineKeyboardButton(text="Ежедневная ", callback_data="type_daily")],
+        [InlineKeyboardButton(text="Еженедельная ", callback_data="type_weekly")]
     ]
 )

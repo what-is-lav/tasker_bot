@@ -6,11 +6,13 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher
 
 from models import init_db
-import views # Подключаем файл с логикой и кнопками
+import views
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from planner import midnight_reset_job, morning_summary_job
 
-# 1. Правильная загрузка токена из .env
+# Импортируем все 4 функции из твоего файла planner
+from planner import midnight_reset_job, morning_summary_job, evening_summary_job, check_reminders_job
+
+# 1. Загрузка токена
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -20,7 +22,7 @@ if not BOT_TOKEN:
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# 2. Подключение планировщика 
+# 2. Подключение роутера (views)
 dp.include_router(views.router)
 
 # 3. Крошечный хэндлер для веб-страницы
@@ -32,8 +34,17 @@ async def main():
     
     # 4. Настраиваем планировщик 
     scheduler = AsyncIOScheduler(timezone="Asia/Bishkek")
+    
+    # Сброс задач ночью
     scheduler.add_job(midnight_reset_job, trigger='cron', hour=0, minute=0)
+    # Утренняя сводка в 09:00
     scheduler.add_job(morning_summary_job, trigger='cron', hour=9, minute=0, kwargs={'bot': bot})
+    
+    # НОВОЕ: Вечерний итог в 21:00
+    scheduler.add_job(evening_summary_job, trigger='cron', hour=21, minute=0, kwargs={'bot': bot})
+    # НОВОЕ: Ежеминутная проверка точечных напоминаний
+    scheduler.add_job(check_reminders_job, trigger='cron', minute='*', kwargs={'bot': bot})
+    
     scheduler.start()
     
     # 5. Настраиваем веб-сервер для Render
