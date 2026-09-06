@@ -3,3 +3,4 @@ sqlalchemy>=2.0.0
 aiosqlite
 apscheduler
 python-dotenv
+pytz==2026.3.post1
